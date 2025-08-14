@@ -1,0 +1,3 @@
+_target_: loss.time_series_mse.TimeSeriesMSELoss
+reduce_time: True
+reduce_features: True

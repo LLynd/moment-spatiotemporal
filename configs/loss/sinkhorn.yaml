@@ -1,0 +1,4 @@
+_target_: loss.sinkhorn.SinkhornIVLoss
+epsilon: 0.01
+max_iters: 100
+reduction: 'none'
