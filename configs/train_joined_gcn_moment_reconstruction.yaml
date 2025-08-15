@@ -1,9 +1,10 @@
 defaults:
   - _self_
-  - dataloader: 
-  - loss: reconstruction_mse
-  - metric: 
-  - models: 
+  - dataloader: linear/default
+  - loss: time_series_mse
+  - metric: linear
+  - optimizer: adamw
+  - models: moment_gcn
   - wandb: default
   - fabric: single_gpu
 
@@ -12,7 +13,16 @@ exp:
   seed: 42
   log_dir: # set during runtime to automatically created dir
 
+  dataset_name: linear_spiral
   run_func: 
     _target_: experiment.train_joined_gcn_moment_reconstruction.run
 
-  run_id: ???
+  epochs: 100
+  log_frequency: 8
+  validation_frequency: 16
+  save_frequency: 8
+  output_dir: outputs
+  resume_from_checkpoint: False
+
+logging:
+  interval: 100

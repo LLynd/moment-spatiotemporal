@@ -1,0 +1,7 @@
+_target_: models.moment_gcn.MOMENTGCNReconstructor
+pretrained_model: "AutonLab/MOMENT-1-small"
+patch_len: 8
+gcn_hidden_dim: 128
+gcn_emb_dim: 1024
+fusion_dim: 1024
+freeze_moment: true

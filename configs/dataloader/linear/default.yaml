@@ -1,0 +1,9 @@
+_target_: torch.utils.data.DataLoader
+dataset:
+  _target_: dataset.linear.LinearSystemDataset
+  split: train 
+  mode: synthetic
+batch_size: 8
+collate_fn: 
+  _partial_: true
+  _target_: dataset.linear.time_series_collate_fn

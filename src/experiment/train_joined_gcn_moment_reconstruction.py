@@ -1,4 +1,150 @@
 import torch
+import os
+from omegaconf import DictConfig
+from hydra.utils import instantiate
+import utils
+from functools import partial
+import logging
+from utils.checkpointing import (
+    get_checkpoint_path,
+    save_checkpoint,
+    load_checkpoint,
+    calculate_loaded_run_percentage,
+)
+import torch.multiprocessing as mp
+from models.moment_gcn import MOMENTGCNReconstructor
+from dataset.linear import time_series_collate_fn
+mp.set_start_method("spawn", force=True)
+
+log = logging.getLogger(__name__)
+torch.set_float32_matmul_precision("medium")
+
+# Hydra Integration (Main script)
+def get_fabric(config):
+    """Instantiate Fabric object"""
+    fabric = instantiate(config.fabric)
+    fabric.seed_everything(config.exp.seed + fabric.global_rank)
+    fabric.launch()
+    return fabric
+
+def get_components(config, fabric):
+    """Instantiate model, loss, and optimizer"""
+    # Instantiate model
+    model = instantiate(config.models)
+    model = fabric.setup_module(model)  # Returns a single wrapped model
+    
+    # Instantiate loss
+    loss_fn = instantiate(config.loss)
+    
+    # Instantiate optimizer
+    optimizer_class = instantiate(config.optimizer)
+    optimizer = optimizer_class(model.parameters())
+    optimizer = fabric.setup_optimizers(optimizer)  # Setup optimizer separately
+    
+    return model, loss_fn, optimizer  # Return three components
+
+def get_dataloader(config, fabric):
+    """Instantiate dataset and dataloader"""
+    # Instantiate dataset on CPU
+    dataset = instantiate(config.dataloader.dataset)
+    
+    # Create dataloader
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=config.dataloader.batch_size,
+        shuffle=False,
+        #num_workers=config.dataloader.num_workers,
+        pin_memory=True,  # Important for GPU performance
+        collate_fn=time_series_collate_fn  # Use your custom collate function
+    )
+    
+    # Setup with Fabric
+    return fabric.setup_dataloaders(dataloader)
+
+def run(config: DictConfig):
+    log.info("Launching Fabric")
+    fabric = get_fabric(config)
+    utils.hydra.preprocess_config(config)
+    utils.wandb.setup_wandb(config)
+
+    with fabric.init_tensor():
+        log.info("Initializing components")
+        model, loss_fn, optimizer = get_components(config, fabric)
+        log.info("Initializing dataloader")
+        dataloader = get_dataloader(config, fabric)
+
+        # Checkpoint handling
+        checkpoint_path = get_checkpoint_path(config)
+        start_epoch = 0
+        if checkpoint_path and config.exp.resume_from_checkpoint:
+            checkpoint = load_checkpoint(checkpoint_path, fabric)
+            model.load_state_dict(checkpoint['model'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            start_epoch = checkpoint['epoch'] + 1
+            log.info(f"Resuming from epoch {start_epoch}")
+
+        log.info("Beginning training loop")
+        for epoch in range(start_epoch, config.exp.epochs):
+            fabric.call("on_epoch_start")
+            model.train()
+            
+            for batch_idx, batch in enumerate(dataloader):
+                optimizer.zero_grad()
+                
+                print(batch)  # Debugging: print batch shape
+                # Forward pass
+                reconstructed = model(batch)
+                
+                # Loss calculation
+                loss = loss_fn(reconstructed, batch)
+                
+                # Backward pass
+                fabric.backward(loss)
+                optimizer.step()
+                
+                # Logging
+                if batch_idx % config.logging.interval == 0:
+                    fabric.log_dict({
+                        "train/loss": loss.item(),
+                        "epoch": epoch,
+                        "batch": batch_idx
+                    })
+            
+            # Checkpointing
+            if epoch % config.exp.checkpoint_freq == 0:
+                save_checkpoint(
+                    path=checkpoint_path,
+                    state={
+                        'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'epoch': epoch,
+                        'config': config
+                    },
+                    fabric=fabric
+                )
+            
+            fabric.call("on_epoch_end")
+        
+        log.info("Training completed")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+'''
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
@@ -273,3 +419,4 @@ def run(config: DictConfig):
     )
     
     visualize_reconstruction(reconstructor, test_loader)
+'''

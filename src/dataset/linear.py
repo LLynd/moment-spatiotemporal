@@ -1,9 +1,9 @@
 import torch
 import numpy as np
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import Dataset, Subset
 from dataclasses import dataclass
 from typing import Union, Dict, Tuple, Optional
-
+from scipy.integrate import solve_ivp
 
 @dataclass
 class Batch:
@@ -54,7 +54,8 @@ class LinearSystemDataset(Dataset):
             "system_type": "stable_spiral",
             "num_timepoints": 100,
             "t_span": (0, 10),
-            "x0_range": (-2, 2)
+            "x0_range": (-2, 2),
+            "seed": seed  # Pass seed to generation function
         }
         
         if mode == "synthetic":
@@ -66,28 +67,32 @@ class LinearSystemDataset(Dataset):
             self._load_file_data(data_path, train_ratio)
 
     def _generate_synthetic_data(self, train_ratio: float):
-        """Generate synthetic time series data"""
+        """Generate synthetic time series data on CPU"""
         # Generate the full dataset
         full_data = self._generate_trajectory_dataset(**self.synthetic_params)
         
-        # Convert to tensor (num_samples, 2, seq_len)
+        # Convert to tensor on CPU (num_samples, 2, seq_len)
         full_data = torch.tensor(full_data, dtype=torch.float32).permute(0, 2, 1)
         
-        # Split into train/test
-        num_train = int(len(full_data) * train_ratio)
-        num_test = len(full_data) - num_train
+        # Split into train/test using NumPy to avoid PyTorch generator issues
+        num_samples = len(full_data)
+        num_train = int(num_samples * train_ratio)
         
-        # Use random_split for reproducible splitting
-        train_data, test_data = random_split(
-            full_data,
-            [num_train, num_test],
-            generator=torch.Generator().manual_seed(self.seed)
-        )
+        # Create indices and shuffle with NumPy
+        indices = np.arange(num_samples)
+        rng = np.random.default_rng(self.seed)
+        rng.shuffle(indices)
         
-        self.data = train_data if self.split == "train" else test_data
+        if self.split == "train":
+            selected_indices = indices[:num_train]
+        else:
+            selected_indices = indices[num_train:]
+        
+        # Create a Subset instead of using random_split
+        self.data = Subset(full_data, selected_indices)
 
     def _load_file_data(self, data_path: Union[str, Dict], train_ratio: float):
-        """Load time series data from file(s)"""
+        """Load time series data from file(s) on CPU"""
         if isinstance(data_path, dict):
             # Separate train/test files
             path = data_path[self.split]
@@ -97,7 +102,7 @@ class LinearSystemDataset(Dataset):
             full_data_np = np.load(data_path)
             num_train = int(len(full_data_np) * train_ratio)
             
-            # Reproducible split
+            # Reproducible split with NumPy
             rng = np.random.default_rng(self.seed)
             indices = np.arange(len(full_data_np))
             rng.shuffle(indices)
@@ -107,14 +112,18 @@ class LinearSystemDataset(Dataset):
             else:
                 data_np = full_data_np[indices[num_train:]]
         
-        # Convert to tensor (num_samples, 2, seq_len)
+        # Convert to tensor on CPU (num_samples, 2, seq_len)
         self.data = torch.tensor(data_np, dtype=torch.float32).permute(0, 2, 1)
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, index):
-        return index, self.data[index]
+        # Return data on CPU - Fabric will handle device transfer later
+        if isinstance(self.data, Subset):
+            return index, self.data[index]
+        else:
+            return index, self.data[index]
 
     @staticmethod
     def _generate_trajectory_dataset(
@@ -125,7 +134,7 @@ class LinearSystemDataset(Dataset):
         x0_range: Tuple[float, float] = (-2, 2),
         seed: Optional[int] = None
     ) -> np.ndarray:
-        """Generate trajectory dataset for a specific system type"""
+        """Generate trajectory dataset for a specific system type on CPU"""
         # System matrix definitions
         system_matrices = {
             "stable_node": np.diag([-1.2, -0.8]),
@@ -146,6 +155,7 @@ class LinearSystemDataset(Dataset):
         system_dynamics = lambda t, z: A @ z  # Linear dynamics
         
         for _ in range(num_trajectories):
+            # Explicitly use NumPy for CPU operations
             x0 = np.random.uniform(*x0_range, size=2)
             sol = solve_ivp(system_dynamics, t_span, x0, t_eval=time)
             trajectories.append(sol.y.T)  # Shape: (seq_len, 2)

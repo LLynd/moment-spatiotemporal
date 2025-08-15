@@ -1,7 +1,6 @@
 defaults:
   - _self_
-  - dataloader: 
-  - synthetic: 
+  - dataloader: linear/default
   - wandb: default
   - fabric: single_gpu
 

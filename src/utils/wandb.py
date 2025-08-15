@@ -4,10 +4,10 @@ from wandb.apis.public import File
 from typing import Iterable, List, Tuple, Any, Dict
 import omegaconf
 import numpy as np
-from utils.misc import from_0255_to_01
+#from utils.misc import from_0255_to_01
 from PIL import Image
 import torch
-from lightning import Fabric
+from lightning.fabric import Fabric
 import torch.distributed as dist
 
 import re
@@ -28,11 +28,6 @@ def setup_wandb(config):
     """
     Sets up W&B run based on config.
     """
-    from experiment.train_graph_econder_decoder_reconstruction import fabric as fabric_global
-
-    if fabric_global.global_rank != 0:
-        return
-
     group, name = config.exp.log_dir.parts[-2:]
     wandb_config = omegaconf.OmegaConf.to_container(
         config, resolve=True, throw_on_missing=True
@@ -46,6 +41,7 @@ def setup_wandb(config):
         config=wandb_config,
         sync_tensorboard=True,
     )
+
 
 
 def wandb_log_sequential(log_dict: dict):
@@ -143,7 +139,7 @@ def split_grid(images_grid: np.array, image_size: int) -> np.array:
 
     return np.array(images)
 
-
+'''
 def download_run(
     entity: str,
     project: str,
@@ -234,7 +230,7 @@ def download_run(
     metrics = metrics_history
 
     return tmp_dir, pairs, run.config, image_size, metrics
-
+'''
 
 if __name__ == "__main__":
     sample_padded_image = np.zeros((16, 16, 1))
