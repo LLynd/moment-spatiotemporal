@@ -1,18 +1,16 @@
 import abc
 import torch
-import torchvision.transforms.functional as TF
 import logging
 
-from utils.misc import min_max_scale
 
 log = logging.getLogger(__name__)
 
-
 class BaseMetric(abc.ABC, torch.nn.Module):
-    """Base class for metrics."""
+    """Base class for time series metrics."""
 
     def __init__(self):
         super(BaseMetric, self).__init__()
+        # Dummy parameter to ensure module has parameters
         self.dummy_parameter = torch.nn.Parameter(torch.zeros(1), requires_grad=True)
 
         self.batch_input: torch.Tensor | None = None
@@ -24,31 +22,17 @@ class BaseMetric(abc.ABC, torch.nn.Module):
         """Compute metric from intermediate states and log results."""
         pass
 
-    def map_scale_and_shape(self, x):
-        # get shapes
-        B, C, H, W = x.shape
-
-        # scale to [0, 1] range
-        x = min_max_scale(x)
-
-        # map to uint8 and then back to float32
-        x = TF.convert_image_dtype(x, torch.uint8) / 255.0
-
-        # repeat channels to have 3
-        if C == 1:
-            x = x.repeat(1, 3, 1, 1)
-
-        return x
-
     def forward(
         self,
         batch_input: torch.Tensor,
         batch_output: torch.Tensor,
         batch_misc: dict,
     ):
+        """Process batch data - implement in child classes if needed"""
         pass
 
     def precondition(self, conditions: dict):
+        """Set preconditions for metric computation"""
         pass
 
     def step(
@@ -57,23 +41,30 @@ class BaseMetric(abc.ABC, torch.nn.Module):
         batch_output: torch.Tensor = None,
         batch_misc: dict = None,
     ):
+        """Process a batch of data"""
         self.forward(
             batch_input if batch_input is not None else self.batch_input,
             batch_output if batch_output is not None else self.batch_output,
             batch_misc if batch_misc is not None else self.batch_misc,
         )
 
+        # Clear batch data after processing
         self.batch_input = None
         self.batch_output = None
         self.batch_misc = dict()
 
     def register_batch_input(self, batch_input: torch.Tensor):
+        """Register input time series batch"""
+        # Shape: (batch_size, num_channels, sequence_length)
         self.batch_input = batch_input
 
     def register_batch_output(self, batch_output: torch.Tensor):
+        """Register output/reconstructed time series batch"""
+        # Shape: (batch_size, num_channels, sequence_length)
         self.batch_output = batch_output
 
     def register_batch_misc(self, batch_misc: dict):
+        """Register additional batch information"""
         self.batch_misc.update(batch_misc)
 
 
@@ -120,5 +111,5 @@ class MetricsList(BaseMetric):
         batch_misc: dict,
     ):
         for metric in self.metrics:
-            log.info(f"Accumulating {metric.module}")
+            log.info(f"Accumulating {type(metric).__name__}")
             metric.forward(batch_input, batch_output, batch_misc)
